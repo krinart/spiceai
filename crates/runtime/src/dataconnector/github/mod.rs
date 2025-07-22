@@ -14,13 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-use crate::component::dataset::Dataset;
 use crate::token_providers::github_app_token::GitHubAppTokenProvider;
+use crate::{component::dataset::Dataset, dataconnector::github::members::MembersTableArgs};
 use arrow::array::{Array, RecordBatch};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use async_trait::async_trait;
 use chrono::{SecondsFormat, TimeZone, Utc, offset::LocalResult};
 use commits::CommitsTableArgs;
+use data_components::graphql::client::UnnestBehavior;
 use data_components::{
     github::{self, GithubFilesTableProvider, GithubRestClient},
     graphql::{
@@ -61,6 +62,7 @@ use super::{
 
 mod commits;
 mod issues;
+mod members;
 mod pull_requests;
 mod rate_limit;
 mod stargazers;
@@ -78,8 +80,8 @@ pub struct GitHubTableGraphQLParams {
 
     /// The JSON pointer to the data in the response. If not provided, it will be inferred from the query.
     json_pointer: Option<&'static str>,
-    /// The depth to unnest the data
-    unnest_depth: usize,
+    /// The behavior to use for unnesting the response data
+    unnest_behavior: UnnestBehavior,
     /// The GraphQL schema of the response data, if available
     schema: Option<SchemaRef>,
 }
@@ -89,13 +91,13 @@ impl GitHubTableGraphQLParams {
     pub fn new(
         query: Arc<str>,
         json_pointer: Option<&'static str>,
-        unnest_depth: usize,
+        unnest_behavior: UnnestBehavior,
         schema: Option<SchemaRef>,
     ) -> Self {
         Self {
             query,
             json_pointer,
-            unnest_depth,
+            unnest_behavior,
             schema,
         }
     }
@@ -126,7 +128,7 @@ impl Github {
 
         GraphQLClientBuilder::new(
             Url::parse(&format!("{endpoint}/graphql")).boxed()?,
-            gql_client_params.unnest_depth,
+            gql_client_params.unnest_behavior,
         )
         .with_token_provider(token)
         .with_json_pointer(gql_client_params.json_pointer)
@@ -136,12 +138,33 @@ impl Github {
         .boxed()
     }
 
+    fn get_health_check_for_owner_and_repo(owner: &str, repo: &str) -> String {
+        format!(
+            r#"{{
+            githubHealthCheck: repository(owner: "{owner}", name: "{repo}") {{
+                id
+                nameWithOwner
+            }}
+        }}"#
+        )
+    }
+
+    fn get_health_check_for_org(org: &str) -> String {
+        format!(
+            r#"{{
+            githubHealthCheck: organization(login: "{org}") {{
+                id
+                name
+            }}
+        }}"#
+        )
+    }
+
     async fn create_gql_table_provider(
         &self,
         table_args: Arc<dyn GitHubTableArgs>,
         context: Option<Arc<dyn GraphQLContext>>,
-        owner: &str,
-        repo: &str,
+        health_check_query_string: String,
     ) -> super::DataConnectorResult<Arc<dyn TableProvider>> {
         let client = self.create_graphql_client(&table_args).context(
             super::UnableToGetReadProviderSnafu {
@@ -159,16 +182,6 @@ impl Github {
             provider_builder
         };
 
-        // Add a sanity check to ensure the endpoint exists
-        let health_check_query_string = format!(
-            r#"{{
-            repositoryCheck: repository(owner: "{owner}", name: "{repo}") {{
-                id
-                nameWithOwner
-            }}
-        }}"#,
-        );
-
         let query_arc = Arc::from(health_check_query_string);
         let health_check_query = GraphQLQuery::try_from(query_arc)
             .map_err(|e| DataConnectorError::InternalWithSource {
@@ -176,7 +189,7 @@ impl Github {
                 connector_component: table_args.get_component(),
                 source: e.into(),
             })?
-            .with_json_pointer(Arc::from("/data/repositoryCheck"));
+            .with_json_pointer(Arc::from("/data/githubHealthCheck"));
 
         Ok(Arc::new(
             provider_builder
@@ -465,8 +478,7 @@ impl DataConnector for Github {
                 self.create_gql_table_provider(
                     Arc::clone(&table_args) as Arc<dyn GitHubTableArgs>,
                     Some(table_args),
-                    owner,
-                    repo,
+                    Github::get_health_check_for_owner_and_repo(owner, repo)
                 )
                 .await
             }
@@ -479,8 +491,7 @@ impl DataConnector for Github {
                 self.create_gql_table_provider(
                     Arc::clone(&table_args) as Arc<dyn GitHubTableArgs>,
                     Some(table_args),
-                    owner,
-                    repo,
+                    Github::get_health_check_for_owner_and_repo(owner, repo)
                 )
                 .await
             }
@@ -494,8 +505,7 @@ impl DataConnector for Github {
                 self.create_gql_table_provider(
                     Arc::clone(&table_args) as Arc<dyn GitHubTableArgs>,
                     Some(table_args),
-                    owner,
-                    repo,
+                    Github::get_health_check_for_owner_and_repo(owner, repo)
                 )
                 .await
             }
@@ -505,11 +515,23 @@ impl DataConnector for Github {
                     repo: repo.to_string(),
                     component: ConnectorComponent::from(dataset),
                 });
-                self.create_gql_table_provider(table_args, None, owner, repo).await
+                self.create_gql_table_provider(table_args, None, Github::get_health_check_for_owner_and_repo(owner, repo)).await
             }
             (Some("github.com"), Some(owner), Some(repo), Some("files")) => {
                 self.create_files_table_provider(owner, repo, parts.next(), dataset)
                     .await
+            }
+            (Some("github.com"), Some(org), Some("members"), None) => {
+                let table_args = Arc::new(MembersTableArgs {
+                    org: org.to_string(),
+                    component: ConnectorComponent::from(dataset),
+                });
+                self.create_gql_table_provider(
+                    Arc::clone(&table_args) as Arc<dyn GitHubTableArgs>,
+                    None,
+                    Github::get_health_check_for_org(org)
+                )
+                .await
             }
             (Some("github.com"), Some(_), Some(_), Some(invalid_table)) => {
                 Err(DataConnectorError::UnableToGetReadProvider {
