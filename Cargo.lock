@@ -11610,6 +11610,7 @@ dependencies = [
  "mediatype",
  "model_components",
  "moka",
+ "mongodb",
  "mysql_async",
  "notify",
  "ns_lookup",
