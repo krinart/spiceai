@@ -223,7 +223,7 @@ file-tpch-init:
 	@for table in region nation customer supplier part partsupp orders lineitem; do \
 		echo "Preparing $$table..."; \
 		cp tpch-kit/dbgen/$$table.tbl ./tmp/$$table.csv; \
-		python ./tpch_file.py ./tmp/$$table; \
+		python3 ./tpch_file.py ./tmp/$$table; \
 		rm ./tmp/$$table.csv; \
 	done
 
@@ -292,3 +292,24 @@ mssql-backup:
 mssql-restore:
 	chmod 755 ./mssql-tpch/data
 	sqlcmd -U $(DB_USER) -P $(DB_PASS) -S $(DB_HOST) -Q "RESTORE DATABASE $(DB_NAME) FROM DISK = '/data/$(DB_NAME).bak' WITH REPLACE"
+
+json-init:
+	@mkdir -p ./tmp
+	@for table in region nation customer supplier part partsupp orders lineitem; do \
+		echo "Preparing $$table..."; \
+		cp tpch-kit/dbgen/$$table.tbl ./tmp/$$table.csv; \
+		python ./tpch_file.py ./tmp/$$table --to_json;\
+		rm ./tmp/$$table.csv; \
+	done
+
+
+# Example: DB_HOST=localhost DB_PORT=27017 DB_USER=root DB_PASS=root DB_NAME=tpch make mongodb-load
+mongodb-load:
+	@for table in region nation customer supplier part partsupp orders lineitem; do \
+		echo "Loading $$table..."; \
+		mongoimport --host $(DB_HOST):$(DB_PORT) --username $(DB_USER) --password $(DB_PASS) --db $(DB_NAME) --authenticationDatabase admin --tlsInsecure --collection $$table --file ./tmp/$$table.json; \
+	done
+
+
+qqq:
+	@(cd tpch-kit/dbgen && DSS_QUERY=../../tmp/queries ./qgen | sed 's/limit -1//' | sed 's/day (3)/day/' > ../../tpch_queries_2.sql)

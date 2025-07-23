@@ -2,6 +2,7 @@ import sys
 import pandas as pd
 from decimal import Decimal, ROUND_HALF_UP
 import os
+import json
 
 # Define column names and their respective data types for TPC-H tables
 COLUMN_DEFINITIONS = {
@@ -165,16 +166,13 @@ COLUMN_DEFINITIONS = {
 }
 
 
-def csv_to_parquet(csv_file, parquet_file):
+def _get_df(csv_file):
     """
-    Converts a CSV file without a header row into a Parquet file with custom column names.
+    Converts a CSV file without a header row into a pandas DataFrame.
     Enforces column data types and appends the column names as the header row in the input CSV file.
 
     Args:
         csv_file (str): Path to the input CSV file.
-        parquet_file (str): Path to the output Parquet file.
-        delimiter (str): Delimiter used in the CSV file. Default is '|'.
-        compression (str): Compression type for the Parquet file. Default is 'snappy'.
     """
     # Extract the table name from the file name (without extension)
     table_name = os.path.splitext(os.path.basename(csv_file))[0]
@@ -204,9 +202,7 @@ def csv_to_parquet(csv_file, parquet_file):
                 lambda x: Decimal(x).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
             )
 
-    # Save the DataFrame as a Parquet file with compression
-    df.to_parquet(parquet_file, index=False, compression="gzip")
-    print(f"Parquet file saved as {parquet_file}")
+    return df, column_dtypes
 
 
 ### Converts the TPC-H CSV file to a Parquet file
@@ -214,9 +210,32 @@ def csv_to_parquet(csv_file, parquet_file):
 ###
 ### Usage: python tpch_file.py <input file name without extension>
 if __name__ == "__main__":
-    input = sys.argv.pop()
+    input = sys.argv[1]
     input_csv = input + ".csv"
-    output_parquet = input + ".parquet"
+    
+    df, column_dtypes = _get_df(input_csv)
 
-    # Convert the CSV to Parquet
-    csv_to_parquet(input_csv, output_parquet)
+    if "--to_json" in sys.argv:
+        output_json = input + ".json"
+        with open(output_json, 'w') as f:
+            for _, row in df.iterrows():
+                row_dict = {}
+                for col, value in row.items():
+                    dtype = column_dtypes.get(col, "string")
+                    if dtype == "decimal":
+                        # Use MongoDB NumberDecimal format
+                        row_dict[col] = {"$numberDecimal": str(value)}
+                    elif dtype.startswith("datetime"):
+                        # Convert Timestamp to string
+                        row_dict[col] = value.strftime('%Y-%m-%d') if pd.notna(value) else None
+                    else:
+                        row_dict[col] = value
+                json.dump(row_dict, f)
+                f.write('\n')
+            f.write('\n')
+        print(f"JSON file saved as {output_json}")
+    else:
+        output_parquet = input + ".parquet"
+        # Save the DataFrame as a Parquet file with compression
+        df.to_parquet(output_parquet, index=False, compression="gzip")
+        print(f"Parquet file saved as {output_parquet}")
