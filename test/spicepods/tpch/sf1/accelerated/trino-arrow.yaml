@@ -1,0 +1,58 @@
+version: v1
+kind: Spicepod
+name: trino-arrow
+
+# Define common anchors
+definitions:
+  # Common mysql parameters
+  - &mysql_params
+    trino_host: ${env:TRINO_HOST}
+    trino_port: ${env:TRINO_TCP_PORT}
+    trino_catalog: ${env:TRINO_CATALOG}
+    trino_schema: ${env:TRINO_SCHEMA}
+    trino_user: ${env:TRINO_USER}
+    trino_ssl: false
+  - &acceleration
+    enabled: true
+    engine: arrow
+
+datasets:
+  - from: trino:customer
+    name: customer
+    params: *mysql_params
+    acceleration: *acceleration
+
+  - from: trino:lineitem
+    name: lineitem
+    params: *mysql_params
+    acceleration: *acceleration
+
+  - from: trino:nation
+    name: nation
+    params: *mysql_params
+    acceleration: *acceleration
+
+  - from: trino:orders
+    name: orders
+    params: *mysql_params
+    acceleration: *acceleration
+
+  - from: trino:part
+    name: part
+    params: *mysql_params
+    acceleration: *acceleration
+
+  - from: trino:partsupp
+    name: partsupp
+    params: *mysql_params
+    acceleration: *acceleration
+
+  - from: trino:region
+    name: region
+    params: *mysql_params
+    acceleration: *acceleration
+
+  - from: trino:supplier
+    name: supplier
+    params: *mysql_params
+    acceleration: *acceleration

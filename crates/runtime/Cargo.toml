@@ -256,6 +256,7 @@ sqlite = [
     "data_components/sqlite",
     "dep:rusqlite",
 ]
+trino = ["data_components/trino"]
 
 [[bench]]
 harness = false

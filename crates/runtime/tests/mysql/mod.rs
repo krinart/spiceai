@@ -537,7 +537,7 @@ fn set_dataset_time_zone(ds: &mut Dataset, tz: &str) -> Result<(), String> {
         return Err("Dataset params are missing".to_string());
     };
     params.data.insert(
-        "mysql_time_zone".to_string(),
+        "mysql_".to_string(),
         ParamValue::String(tz.to_string()),
     );
     Ok(())

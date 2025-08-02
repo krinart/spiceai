@@ -119,7 +119,7 @@ sqlite = [
     "datafusion-table-providers/sqlite",
     "datafusion-table-providers/sqlite-federation",
 ]
-
+trino = ["datafusion-table-providers/trino",]
 test_hadoop_catalog_docker = []
 
 [dev-dependencies]

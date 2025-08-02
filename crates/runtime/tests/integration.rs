@@ -90,6 +90,8 @@ mod spiceai;
 #[cfg(feature = "sqlite")]
 mod sqlite;
 mod tls;
+#[cfg(feature = "trino")]
+mod trino;
 mod utils;
 mod view;
 

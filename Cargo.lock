@@ -4103,20 +4103,20 @@ dependencies = [
 [[package]]
 name = "datafusion-table-providers"
 version = "0.1.0"
-source = "git+https://github.com/datafusion-contrib/datafusion-table-providers.git?rev=2e0bdfd5e7809ae53106f3e63bbfbebbad4aff69#2e0bdfd5e7809ae53106f3e63bbfbebbad4aff69"
 dependencies = [
  "arrow",
  "arrow-json",
  "arrow-schema",
  "async-stream",
  "async-trait",
+ "base64 0.22.1",
  "bb8 0.8.6",
  "bb8-postgres",
  "bigdecimal",
- "bitflags 2.9.1",
  "byte-unit",
  "byteorder",
  "chrono",
+ "chrono-tz 0.8.6",
  "datafusion",
  "datafusion-federation",
  "duckdb",
@@ -4133,6 +4133,8 @@ dependencies = [
  "postgres-native-tls",
  "r2d2",
  "rand 0.8.5",
+ "regex",
+ "reqwest",
  "rusqlite",
  "sea-query",
  "secrecy",

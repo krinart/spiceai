@@ -74,6 +74,7 @@ default = [
   "alloc-snmalloc",
   "oracle",
   "runtime/s3_vectors",
+  "trino",
 ]
 delta_lake = ["runtime/delta_lake"]
 dev = ["runtime/dev"]
@@ -99,3 +100,4 @@ snowflake = ["runtime/snowflake"]
 spark = ["runtime/spark"]
 sqlite = ["runtime/sqlite"]
 tpc-extension = ["dep:tpc-extension"]
+trino = ["runtime/trino"]
