@@ -30,9 +30,9 @@ pub mod common;
 use super::*;
 use app::AppBuilder;
 use runtime::Runtime;
-use tracing::instrument;
 use spicepod::component::dataset::Dataset;
 use spicepod::param::ParamValue;
+use tracing::instrument;
 
 const TRINO_PORT1: u16 = 18080;
 const TRINO_PORT2: u16 = 18081;
@@ -67,7 +67,9 @@ async fn init_trino_db(port: u16) -> Result<(), anyhow::Error> {
     "#;
 
     // Drop table if exists first
-    let _ = client.execute_ddl("DROP TABLE IF EXISTS memory.default.test").await;
+    let _ = client
+        .execute_ddl("DROP TABLE IF EXISTS memory.default.test")
+        .await;
     client.execute_ddl(create_table_sql).await?;
 
     let ts = DateTime::parse_from_rfc3339("2019-01-01T00:00:00Z")?.with_timezone(&Utc);
@@ -227,7 +229,9 @@ async fn init_trino_tz_test_db(port: u16) -> Result<(), anyhow::Error> {
     "#;
 
     // Drop table if exists first
-    let _ = client.execute_ddl("DROP TABLE IF EXISTS memory.default.tz_test").await;
+    let _ = client
+        .execute_ddl("DROP TABLE IF EXISTS memory.default.tz_test")
+        .await;
     client.execute_ddl(create_table_sql).await?;
 
     // Insert test data with various timezone scenarios
@@ -276,23 +280,29 @@ async fn trino_timezone_test() -> Result<(), String> {
 
             let retry_strategy = FibonacciBackoffBuilder::new().max_retries(Some(10)).build();
             retry(retry_strategy, || async {
-                init_trino_tz_test_db(TRINO_PORT2)
-                    .await
-                    .map_err(|e| {
-                        tracing::error!("Failed transiently to initialize Trino timezone database: {e}");
-                        RetryError::transient(e)
-                    })
+                init_trino_tz_test_db(TRINO_PORT2).await.map_err(|e| {
+                    tracing::error!(
+                        "Failed transiently to initialize Trino timezone database: {e}"
+                    );
+                    RetryError::transient(e)
+                })
             })
-                .await
-                .map_err(|e| {
-                    tracing::error!("Failed to initialize Trino timezone database: {e}");
-                    e.to_string()
-                })?;
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to initialize Trino timezone database: {e}");
+                e.to_string()
+            })?;
 
-            let mut ds_utc = make_trino_dataset("memory.default.tz_test", "tz_utc_tbl", TRINO_PORT2, false);
+            let mut ds_utc =
+                make_trino_dataset("memory.default.tz_test", "tz_utc_tbl", TRINO_PORT2, false);
             set_dataset_time_zone(&mut ds_utc, "+00:00")?;
 
-            let mut ds_custom = make_trino_dataset("memory.default.tz_test", "tz_custom_tbl", TRINO_PORT2, false);
+            let mut ds_custom = make_trino_dataset(
+                "memory.default.tz_test",
+                "tz_custom_tbl",
+                TRINO_PORT2,
+                false,
+            );
             set_dataset_time_zone(&mut ds_custom, "+05:00")?;
 
             let app = AppBuilder::new("trino_timezone_test")
@@ -331,7 +341,7 @@ async fn trino_timezone_test() -> Result<(), String> {
                     },
                 )),
             )
-                .await?;
+            .await?;
 
             run_query_and_check_results(
                 &mut rt,
@@ -347,7 +357,7 @@ async fn trino_timezone_test() -> Result<(), String> {
                     },
                 )),
             )
-                .await?;
+            .await?;
 
             running_container.remove().await.map_err(|e| {
                 tracing::error!("running_container.remove: {e}");

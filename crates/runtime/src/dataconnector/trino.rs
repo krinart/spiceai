@@ -18,8 +18,10 @@ use crate::component::dataset::Dataset;
 use async_trait::async_trait;
 use data_components::Read;
 use datafusion::datasource::TableProvider;
+use datafusion_table_providers::sql::db_connection_pool::trinodbpool::{
+    Error as TrinoError, TrinoConnectionPool,
+};
 use datafusion_table_providers::trino::TrinoTableFactory;
-use datafusion_table_providers::sql::db_connection_pool::trinodbpool::{Error as TrinoError, TrinoConnectionPool};
 use snafu::prelude::*;
 use std::any::Any;
 use std::convert::Into;
@@ -102,7 +104,7 @@ impl DataConnectorFactory for TrinoFactory {
                                 dataconnector: "trino".to_string(),
                                 connector_component: params.component.clone(),
                             }
-                                .into(),
+                            .into(),
                         );
                     }
 
@@ -112,7 +114,7 @@ impl DataConnectorFactory for TrinoFactory {
                             connector_component: params.component.clone(),
                             source: Box::new(error),
                         }
-                            .into());
+                        .into());
                     }
                 },
             };
@@ -142,15 +144,13 @@ impl DataConnector for Trino {
         &self,
         dataset: &Dataset,
     ) -> super::DataConnectorResult<Arc<dyn TableProvider>> {
-        Ok(Read::table_provider(
-            &self.trino_factory,
-            dataset.path().into(),
-            dataset.schema(),
+        Ok(
+            Read::table_provider(&self.trino_factory, dataset.path().into(), dataset.schema())
+                .await
+                .context(super::UnableToGetReadProviderSnafu {
+                    dataconnector: "trino",
+                    connector_component: ConnectorComponent::from(dataset),
+                })?,
         )
-            .await
-            .context(super::UnableToGetReadProviderSnafu {
-                dataconnector: "trino",
-                connector_component: ConnectorComponent::from(dataset),
-            })?)
     }
 }

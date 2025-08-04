@@ -14,21 +14,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-use std::collections::HashMap;
-use tokio::time::sleep;
-use reqwest::Client;
-use reqwest::header::HeaderMap;
-use serde_json::Value;
-use std::time::Duration;
-use bollard::secret::HealthConfig;
-use spicepod::{
-    acceleration::Acceleration, component::dataset::Dataset, param::Params as DatasetParams,
-};
-use tracing::instrument;
 use crate::{
     container_registry,
     docker::{ContainerRunnerBuilder, RunningContainer},
 };
+use bollard::secret::HealthConfig;
+use reqwest::Client;
+use reqwest::header::HeaderMap;
+use serde_json::Value;
+use spicepod::{
+    acceleration::Acceleration, component::dataset::Dataset, param::Params as DatasetParams,
+};
+use std::collections::HashMap;
+use std::time::Duration;
+use tokio::time::sleep;
+use tracing::instrument;
 
 const TRINO_DOCKER_CONTAINER: &str = "runtime-integration-test-trino";
 
@@ -64,10 +64,10 @@ pub async fn start_trino_docker_container(
                 "CMD-SHELL".to_string(),
                 "curl -f http://localhost:8080/v1/info || exit 1".to_string(),
             ]),
-            interval: Some(5_000_000_000),    // 5 seconds
-            timeout: Some(10_000_000_000),    // 10 seconds
+            interval: Some(5_000_000_000), // 5 seconds
+            timeout: Some(10_000_000_000), // 10 seconds
             retries: Some(10),
-            start_period: Some(30_000_000_000), // 30 seconds
+            start_period: Some(30_000_000_000),  // 30 seconds
             start_interval: Some(2_000_000_000), // 2 seconds
         })
         .build()?
@@ -100,8 +100,6 @@ impl TrinoClient {
     }
 
     async fn execute(&self, query: &str) -> Result<Vec<Vec<serde_json::Value>>, anyhow::Error> {
-        println!("Executing query: {query}");
-
         // Submit the query
         let url = format!("{}/v1/statement", self.base_url);
         let response = self
@@ -119,23 +117,14 @@ impl TrinoClient {
             ));
         }
 
-        println!("Query submitted successfully");
-
         let mut result: Value = response.json().await?;
         let mut all_data = Vec::new();
 
         loop {
             let state = result["stats"]["state"].as_str().unwrap_or("");
 
-            println!(
-                "State: {}, next uri: {}",
-                state,
-                result.get("nextUri").and_then(|v| v.as_str()).unwrap_or("")
-            );
-
             // Extract data rows
             if let Some(data) = result.get("data").and_then(|d| d.as_array()) {
-                println!("data detected");
                 for row in data {
                     if let Some(row_array) = row.as_array() {
                         all_data.push(row_array.clone());
