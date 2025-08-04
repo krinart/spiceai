@@ -80,6 +80,7 @@ const PARAMETERS: &[ParameterSpec] = &[
     ParameterSpec::component("identity_pem_path").secret(),
     ParameterSpec::component("bearer_token").secret(),
     ParameterSpec::component("poll_wait_time_ms").secret(),
+    ParameterSpec::component("time_zone").secret(),
 ];
 
 impl DataConnectorFactory for TrinoFactory {

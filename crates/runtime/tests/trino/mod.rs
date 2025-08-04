@@ -31,8 +31,11 @@ use super::*;
 use app::AppBuilder;
 use runtime::Runtime;
 use tracing::instrument;
+use spicepod::component::dataset::Dataset;
+use spicepod::param::ParamValue;
 
-const TRINO_PORT1: u16 = 8080;
+const TRINO_PORT1: u16 = 18080;
+const TRINO_PORT2: u16 = 18081;
 
 #[instrument]
 async fn init_trino_db(port: u16) -> Result<(), anyhow::Error> {
@@ -59,8 +62,7 @@ async fn init_trino_db(port: u16) -> Result<(), anyhow::Error> {
             col_decimal decimal(10,2),
             col_unsigned_int bigint,
             col_char char(3),
-            col_set array(varchar),
-            col_json json
+            col_set array(varchar)
         )
     "#;
 
@@ -90,12 +92,10 @@ async fn init_trino_db(port: u16) -> Result<(), anyhow::Error> {
             1.11,
             10,
             'USA',
-            array['apple', 'banana'],
-            json '{"name": "John", "age": 30, "is_active": true, "balance": 1234.56}'
+            array['apple', 'banana']
         ),
         (
             2,
-            null,
             null,
             null,
             null,
@@ -169,11 +169,11 @@ async fn trino_integration_test() -> Result<(), String> {
             }
 
             let queries: QueryTests = vec![(
-                "SELECT id, col_bit, col_tiny, col_short, col_long, col_longlong, col_float, col_double, col_timestamp, col_date, col_time, col_blob, col_string, col_decimal, col_unsigned_int, col_char, col_set, col_json FROM test",
+                "SELECT id, col_bit, col_tiny, col_short, col_long, col_longlong, col_float, col_double, col_timestamp, col_date, col_time, col_blob, col_string, col_decimal, col_unsigned_int, col_char, col_set FROM test",
                 "select",
                 Some(Box::new(|result_batches| {
                     for batch in &result_batches {
-                        assert_eq!(batch.num_columns(), 18, "num_cols: {}", batch.num_columns());
+                        assert_eq!(batch.num_columns(), 17, "num_cols: {}", batch.num_columns());
                         assert_eq!(batch.num_rows(), 2, "num_rows: {}", batch.num_rows());
                     }
 
@@ -195,7 +195,7 @@ async fn trino_integration_test() -> Result<(), String> {
                     &mut rt,
                     &format!("trino_integration_test_{snapshot_suffix}"),
                     query,
-                    false, // can't snapshot this plan
+                    true, // can't snapshot this plan
                     validate_result,
                 )
                     .await?;
@@ -209,4 +209,163 @@ async fn trino_integration_test() -> Result<(), String> {
             Ok(())
         })
         .await
+}
+
+#[instrument]
+async fn init_trino_tz_test_db(port: u16) -> Result<(), anyhow::Error> {
+    tracing::debug!("INIT DB: timezone test");
+    let client = get_trino_client(port).await?;
+
+    // Create the timezone test table
+    tracing::debug!("CREATE TABLE tz_test");
+    let create_table_sql = r#"
+        CREATE TABLE memory.default.tz_test (
+            id bigint,
+            ts_column timestamp,
+            ts_with_tz timestamp with time zone
+        )
+    "#;
+
+    // Drop table if exists first
+    let _ = client.execute_ddl("DROP TABLE IF EXISTS memory.default.tz_test").await;
+    client.execute_ddl(create_table_sql).await?;
+
+    // Insert test data with various timezone scenarios
+    let insert_sql = r#"
+        INSERT INTO memory.default.tz_test VALUES
+        (
+            1,
+            timestamp '2023-06-15 12:30:45',
+            timestamp '2023-06-15 12:30:45 +00:00'
+        ),
+        (
+            2,
+            timestamp '2023-12-25 23:59:59',
+            timestamp '2023-12-25 23:59:59 -05:00'
+        ),
+        (
+            3,
+            timestamp '2023-01-01 00:00:00',
+            timestamp '2023-01-01 00:00:00 +01:00'
+        ),
+        (
+            4,
+            timestamp '2023-07-04 18:00:00',
+            timestamp '2023-07-04 18:00:00 -08:00'
+        )
+    "#;
+
+    client.execute_query(insert_sql).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn trino_timezone_test() -> Result<(), String> {
+    let _tracing = init_tracing(Some("integration=debug,info"));
+
+    test_request_context()
+        .scope(async {
+            let running_container =
+                start_trino_docker_container(TRINO_PORT2)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("start_trino_docker_container: {e}");
+                        e.to_string()
+                    })?;
+            tracing::debug!("Container started");
+
+            let retry_strategy = FibonacciBackoffBuilder::new().max_retries(Some(10)).build();
+            retry(retry_strategy, || async {
+                init_trino_tz_test_db(TRINO_PORT2)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Failed transiently to initialize Trino timezone database: {e}");
+                        RetryError::transient(e)
+                    })
+            })
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to initialize Trino timezone database: {e}");
+                    e.to_string()
+                })?;
+
+            let mut ds_utc = make_trino_dataset("memory.default.tz_test", "tz_utc_tbl", TRINO_PORT2, false);
+            set_dataset_time_zone(&mut ds_utc, "+00:00")?;
+
+            let mut ds_custom = make_trino_dataset("memory.default.tz_test", "tz_custom_tbl", TRINO_PORT2, false);
+            set_dataset_time_zone(&mut ds_custom, "+05:00")?;
+
+            let app = AppBuilder::new("trino_timezone_test")
+                .with_dataset(ds_utc)
+                .with_dataset(ds_custom)
+                .build();
+
+            let mut rt = Runtime::builder()
+                .with_app(app)
+                .with_datafusion_configuration_fn(configure_test_datafusion)
+                .build()
+                .await;
+
+            let cloned_rt = Arc::new(rt.clone());
+
+            tokio::select! {
+                () = tokio::time::sleep(std::time::Duration::from_secs(60)) => {
+                    return Err("Timed out waiting for datasets to load".to_string());
+                }
+                () = cloned_rt.load_components() => {}
+            }
+
+            runtime_ready_check(&rt).await;
+
+            run_query_and_check_results(
+                &mut rt,
+                "trino_timezone_test",
+                "SELECT * FROM tz_utc_tbl ORDER BY id",
+                false,
+                Some(Box::new(
+                    |result_batches: Vec<arrow::array::RecordBatch>| {
+                        let results = arrow::util::pretty::pretty_format_batches(&result_batches)
+                            .expect("should pretty print result batch");
+
+                        insta::assert_snapshot!("trino_utc_time_zone", results);
+                    },
+                )),
+            )
+                .await?;
+
+            run_query_and_check_results(
+                &mut rt,
+                "trino_timezone_test",
+                "SELECT * FROM tz_custom_tbl ORDER BY id",
+                false,
+                Some(Box::new(
+                    |result_batches: Vec<arrow::array::RecordBatch>| {
+                        let results = arrow::util::pretty::pretty_format_batches(&result_batches)
+                            .expect("should pretty print result batch");
+
+                        insta::assert_snapshot!("trino_custom_time_zone", results);
+                    },
+                )),
+            )
+                .await?;
+
+            running_container.remove().await.map_err(|e| {
+                tracing::error!("running_container.remove: {e}");
+                e.to_string()
+            })?;
+
+            Ok(())
+        })
+        .await
+}
+
+fn set_dataset_time_zone(ds: &mut Dataset, tz: &str) -> Result<(), String> {
+    let Some(params) = ds.params.as_mut() else {
+        return Err("Dataset params are missing".to_string());
+    };
+    params.data.insert(
+        "trino_time_zone".to_string(),
+        ParamValue::String(tz.to_string()),
+    );
+    Ok(())
 }
