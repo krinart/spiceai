@@ -31,165 +31,25 @@ env:
   RUST_PROFILE: ${{ github.event.inputs.profile_option || 'lint' }}
 
 jobs:
-  # `pr` is a required check for pull requests. Therefore we cannot skip the workflow via
-  # `on.pull_requests.paths-ignore`. Instead, we conditionally run the jobs (which report
-  # a sucess when skipped).
-  check_changes:
-    runs-on: ubuntu-latest
-    outputs:
-      relevant_changes: ${{ steps.check_changes.outputs.relevant_changes }}
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Detect all code changes
-        id: changed-code-files
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            code_changes:
-              - 'crates/**'
-              - 'bin/**'
-              - 'test/**'
-              - 'tools/**'
-              - 'install/**'
-              - '.github/workflows/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'go.mod'
-              - 'go.sum'
-
-      - name: Check for relevant changes
-        id: check_changes
-        run: |
-          echo "relevant_changes=${{ steps.changed-code-files.outputs.code_changes }}" >> $GITHUB_OUTPUT
-
-  lint:
-    name: Run Go & Rust Linters
-    runs-on: ubuntu-latest
-    env:
-      GOVER: 1.24.2
-    needs: check_changes
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Set up Go
-        if: needs.check_changes.outputs.relevant_changes == 'true'
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.GOVER }}
-          cache: false
-
-      - name: Install golangci-lint
-        if: needs.check_changes.outputs.relevant_changes == 'true'
-        run: |
-          if ! command -v golangci-lint &> /dev/null ; then
-            curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
-          fi
-
-      - name: Set up Rust
-        uses: ./.github/actions/setup-rust
-        if: needs.check_changes.outputs.relevant_changes == 'true'
-        with:
-          os: 'linux'
-
-      - name: Check if sccache can be set up
-        run: |
-          if [ -z "${{ secrets.TEST_MINIO_ENDPOINT }}" ]; then
-            echo "SCCACHE_SETUP=false" >> $GITHUB_ENV
-            echo "RUSTC_WRAPPER=" >> $GITHUB_ENV
-          else
-            echo "SCCACHE_SETUP=true" >> $GITHUB_ENV
-            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          fi
-
-      - name: Set up sccache
-        if: ${{ needs.check_changes.outputs.relevant_changes == 'true' &&  env.SCCACHE_SETUP == 'true' }}
-        uses: ./.github/actions/setup-sccache
-        with:
-          minio_endpoint: ${{ secrets.TEST_MINIO_ENDPOINT }}
-          os: 'linux'
-
-      - name: Install Protoc
-        if: needs.check_changes.outputs.relevant_changes == 'true'
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up make
-        uses: ./.github/actions/setup-make
-
-      - name: Set up cc
-        uses: ./.github/actions/setup-cc
-
-      - run: make lint
-        if: needs.check_changes.outputs.relevant_changes == 'true'
-        env:
-          RUSTC_WRAPPER: ${{ env.RUSTC_WRAPPER }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.TEST_MINIO_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.TEST_MINIO_SECRET_KEY }}
-          CARGO_INCREMENTAL: 0
-          CARGO_NET_GIT_FETCH_WITH_CLI: true
-          RUST_PROFILE: ${{ env.RUST_PROFILE }}
-
-      - name: Show sccache stats
-        if: ${{ needs.check_changes.outputs.relevant_changes == 'true' && env.SCCACHE_SETUP == 'true' }}
-        run: sccache --show-stats
-
-      - name: Check if Cargo.lock is updated
-        if: needs.check_changes.outputs.relevant_changes == 'true'
-        run: |
-          if git diff --exit-code Cargo.lock; then
-            echo "Cargo.lock is up to date"
-          else
-            echo "Update Cargo.lock"
-            exit 1
-          fi
 
   build:
     name: Build Go & Rust
     runs-on: ubuntu-latest
     env:
-      GOVER: 1.24.2
-    needs: check_changes
+      RUSTC_WRAPPER: sccache
+      SCCACHE_BUCKET: ${{ secrets.SCCACHE_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
     steps:
       - uses: actions/checkout@v5
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.GOVER }}
-          cache: false
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
         with:
           os: 'linux'
 
-      - name: Install Nextest
-        if: needs.check_changes.outputs.relevant_changes == 'true'
-        run: |
-          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
-
-      - name: Check if sccache can be set up
-        run: |
-          if [ -z "${{ secrets.TEST_MINIO_ENDPOINT }}" ]; then
-            echo "SCCACHE_SETUP=false" >> $GITHUB_ENV
-            echo "RUSTC_WRAPPER=" >> $GITHUB_ENV
-          else
-            echo "SCCACHE_SETUP=true" >> $GITHUB_ENV
-            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          fi
-
-      - name: Set up sccache
-        if: ${{ needs.check_changes.outputs.relevant_changes == 'true' && env.SCCACHE_SETUP == 'true' }}
-        uses: ./.github/actions/setup-sccache
-        with:
-          minio_endpoint: ${{ secrets.TEST_MINIO_ENDPOINT }}
-          os: 'linux'
+      - uses: mozilla-actions/sccache-action@v0.0.3
 
       - name: Set up make
         uses: ./.github/actions/setup-make
@@ -197,49 +57,7 @@ jobs:
       - name: Set up cc
         uses: ./.github/actions/setup-cc
 
-      - run: make build-cli nextest
-        if: needs.check_changes.outputs.relevant_changes == 'true'
-        env:
-          RUSTC_WRAPPER: ${{ env.RUSTC_WRAPPER }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.TEST_MINIO_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.TEST_MINIO_SECRET_KEY }}
-          CARGO_INCREMENTAL: 0
-          CARGO_NET_GIT_FETCH_WITH_CLI: true
-          RUST_PROFILE: ${{ env.RUST_PROFILE }}
-          AWS_S3_CLIENT_ID: ${{ secrets.AWS_S3_CLIENT_ID }}
-          AWS_S3_IDENTITY_POOL_ID: ${{ secrets.AWS_S3_IDENTITY_POOL_ID }}
-          AWS_S3_USERNAME: ${{ secrets.AWS_S3_USERNAME }}
-          AWS_S3_PASSWORD: ${{ secrets.AWS_S3_PASSWORD }}
-          AWS_COGNITO_IDP_URI: ${{ vars.AWS_COGNITO_IDP_URI }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
-          NEXTEST_FLAG: --features=xxhash
-
-      - if: needs.check_changes.outputs.relevant_changes == 'true'
-        run: cargo build -p testoperator --all-features
+      - run: make build-runtime
 
       - name: Show sccache stats
-        if: ${{ needs.check_changes.outputs.relevant_changes == 'true' && env.SCCACHE_SETUP == 'true' }}
         run: sccache --show-stats
-
-  build-docker:
-    name: Build Docker Image
-    runs-on: ubuntu-latest
-    needs: check_changes
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Build and push Docker images
-        uses: docker/build-push-action@v6
-        if: needs.check_changes.outputs.relevant_changes == 'true'
-        with:
-          context: .
-          file: Dockerfile
-          platforms: linux/amd64
-          push: false
-          build-args: |
-            CARGO_FEATURES=odbc
-            RUST_PROFILE=${{ env.RUST_PROFILE }}
-          tags: |
-            ghcr.io/spiceai/spiceai-rust:ci
